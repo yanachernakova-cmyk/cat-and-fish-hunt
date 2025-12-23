@@ -1,0 +1,637 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Arrow Key Character</title>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: #e6f7ff;
+        font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+        color: #1c1f2a;
+      }
+
+      .wrap {
+        width: min(900px, 92vw);
+        display: grid;
+        gap: 16px;
+      }
+
+      header {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 12px;
+      }
+
+      h1 {
+        font-size: clamp(1.4rem, 3vw, 2rem);
+        margin: 0;
+      }
+
+      .hint {
+        font-size: 0.95rem;
+        color: #5a6275;
+      }
+
+      canvas {
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        background: linear-gradient(180deg, #c8f0ff 0%, #f7fbff 45%, #c5ecff 100%);
+        border-radius: 22px;
+        border: 2px solid #d4d9ef;
+        box-shadow: 0 20px 40px -30px rgba(20, 24, 40, 0.5);
+      }
+
+      .stats {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+        font-size: 0.95rem;
+        color: #3f465a;
+      }
+
+      .stats span {
+        background: #fff;
+        padding: 8px 12px;
+        border-radius: 999px;
+        border: 1px solid #d9deef;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <h1>Cat & Fish Hunt</h1>
+        <div class="hint">Use ← → to move. ↑ to jump. Shift to sprint.</div>
+      </header>
+      <canvas id="game" width="960" height="540"></canvas>
+      <div class="stats">
+        <span id="pos">Position: 0, 0</span>
+        <span id="speed">Speed: 0</span>
+        <span id="status">Fish: 0</span>
+      </div>
+    </div>
+
+    <script>
+      const canvas = document.getElementById("game");
+      const ctx = canvas.getContext("2d");
+      const posLabel = document.getElementById("pos");
+      const speedLabel = document.getElementById("speed");
+      const statusLabel = document.getElementById("status");
+
+      const player = {
+        x: canvas.width / 2,
+        y: 0,
+        radius: 18,
+        speed: 300,
+        sprintBoost: 1.6,
+        color: "#ff7a59",
+        vy: 0,
+        jumpPower: 520,
+      };
+
+      const gravity = 1400;
+      const platform = {
+        width: 180,
+        height: 18,
+      };
+      const groundY = canvas.height - 70;
+      const fallLimit = canvas.height + player.radius * 2;
+      let isGameOver = false;
+      const keys = new Set();
+      let lastTime = 0;
+      let cameraY = 0;
+      const platforms = [];
+      let highestPlatformY = groundY;
+      const snacks = [];
+      const spoiledFish = [];
+      let score = 0;
+
+      function clamp(value, min, max) {
+        return Math.min(Math.max(value, min), max);
+      }
+
+      function randBetween(min, max) {
+        return Math.random() * (max - min) + min;
+      }
+
+      function createPlatform(x, y, width = platform.width) {
+        return { x, y, width, height: platform.height };
+      }
+
+      function seedPlatforms() {
+        platforms.length = 0;
+        snacks.length = 0;
+        spoiledFish.length = 0;
+        platforms.push(createPlatform(0, groundY, canvas.width));
+        highestPlatformY = groundY;
+        score = 0;
+        updateScore();
+        generatePlatforms();
+      }
+
+      function updateScore() {
+        statusLabel.textContent = `Fish: ${score}`;
+      }
+
+      function createSnack(x, y) {
+        return { x, y, radius: 9, collected: false };
+      }
+
+      function createSpoiledFish(x, y) {
+        return { x, y, radius: 10, active: true };
+      }
+
+      function generatePlatforms() {
+        const maxJumpHeight = (player.jumpPower * player.jumpPower) / (2 * gravity);
+        const maxGap = Math.max(90, maxJumpHeight * 0.75);
+        const minGap = 70;
+        const maxAirTime = (2 * player.jumpPower) / gravity;
+        const maxHoriz = player.speed * maxAirTime * 0.8;
+        const minX = 24;
+        const maxX = canvas.width - platform.width - 24;
+
+        while (highestPlatformY > cameraY - 700) {
+          const last = platforms[platforms.length - 1];
+          const gap = randBetween(minGap, maxGap);
+          const y = last.y - gap;
+          const spreadX = randBetween(minX, maxX);
+          let x = spreadX;
+          const deltaX = x - last.x;
+          if (Math.abs(deltaX) > maxHoriz) {
+            x = last.x + Math.sign(deltaX) * maxHoriz * 0.9;
+          }
+          x = clamp(x, minX, maxX);
+          platforms.push(createPlatform(x, y));
+          if (Math.random() > 0.35) {
+            snacks.push(createSnack(x + platform.width / 2, y - 16));
+          }
+          if (Math.random() > 0.85) {
+            spoiledFish.push(createSpoiledFish(x + platform.width * 0.25, y - 16));
+          }
+          highestPlatformY = y;
+        }
+      }
+
+      function handleKey(event, isDown) {
+        const key = event.key;
+        if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Shift"].includes(key)) {
+          event.preventDefault();
+        }
+        if (isDown) {
+          keys.add(key);
+        } else {
+          keys.delete(key);
+        }
+      }
+
+      window.addEventListener("keydown", (event) => handleKey(event, true));
+      window.addEventListener("keyup", (event) => handleKey(event, false));
+
+      function resetPlayer() {
+        player.x = canvas.width / 2;
+        player.y = groundY - player.radius;
+        player.vy = 0;
+        isGameOver = false;
+        statusLabel.textContent = "Fish: 0";
+        cameraY = 0;
+        seedPlatforms();
+      }
+
+      resetPlayer();
+
+      function update(delta) {
+        if (isGameOver) {
+          return;
+        }
+
+        const sprint = keys.has("Shift") ? player.sprintBoost : 1;
+        const velocity = player.speed * sprint;
+        let dx = 0;
+        let onGround = false;
+        let jumpedThisFrame = false;
+
+        if (keys.has("ArrowLeft")) dx -= 1;
+        if (keys.has("ArrowRight")) dx += 1;
+
+        player.x += dx * velocity * delta;
+        player.vy += gravity * delta;
+        player.y += player.vy * delta;
+
+        const prevY = player.y - player.vy * delta;
+
+        for (const plat of platforms) {
+          const withinX =
+            player.x + player.radius > plat.x &&
+            player.x - player.radius < plat.x + plat.width;
+          const hitTop =
+            player.vy >= 0 &&
+            prevY + player.radius <= plat.y &&
+            player.y + player.radius >= plat.y;
+          if (withinX && hitTop) {
+            player.y = plat.y - player.radius;
+            player.vy = 0;
+            onGround = true;
+            break;
+          }
+        }
+
+        if (onGround && keys.has("ArrowUp")) {
+          player.vy = -player.jumpPower;
+          jumpedThisFrame = true;
+        }
+
+        for (const snack of snacks) {
+          if (snack.collected) continue;
+          const dist = Math.hypot(player.x - snack.x, player.y - snack.y);
+          if (dist < player.radius + snack.radius) {
+            snack.collected = true;
+            score += 1;
+            updateScore();
+            playSnackSound();
+          }
+        }
+
+        for (const bad of spoiledFish) {
+          if (!bad.active) continue;
+          const dist = Math.hypot(player.x - bad.x, player.y - bad.y);
+          if (dist < player.radius + bad.radius) {
+            bad.active = false;
+            isGameOver = true;
+            statusLabel.textContent = "Status: Spoiled fish! Press R to retry.";
+            playSpoiledSound();
+            break;
+          }
+        }
+
+        if (jumpedThisFrame) {
+          playJumpSound();
+        }
+
+        player.x = clamp(player.x, player.radius, canvas.width - player.radius);
+        player.y = clamp(player.y, -Infinity, fallLimit);
+
+        cameraY = Math.min(cameraY, player.y - canvas.height * 0.6);
+        generatePlatforms();
+
+        while (
+          platforms.length &&
+          platforms[0].y - cameraY > canvas.height + 600
+        ) {
+          platforms.shift();
+        }
+        while (snacks.length && snacks[0].y - cameraY > canvas.height + 600) {
+          snacks.shift();
+        }
+        while (
+          spoiledFish.length &&
+          spoiledFish[0].y - cameraY > canvas.height + 600
+        ) {
+          spoiledFish.shift();
+        }
+
+        if (player.y - cameraY > canvas.height + player.radius) {
+          isGameOver = true;
+          statusLabel.textContent = "Status: Fell! Press R to retry.";
+        }
+
+        posLabel.textContent = `Position: ${Math.round(player.x)}, ${Math.round(
+          player.y
+        )}`;
+        speedLabel.textContent = `Speed: ${Math.round(velocity)}`;
+      }
+
+      function draw(time) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        drawBackground();
+
+        ctx.fillStyle = "#6b4b33";
+        for (const plat of platforms) {
+          const y = plat.y - cameraY;
+          if (y > canvas.height || y + plat.height < -40) continue;
+          drawRoundedRect(plat.x, y, plat.width, plat.height, 10);
+          ctx.fill();
+          drawGrassTop(plat.x, y, plat.width, plat.height);
+        }
+
+        ctx.fillStyle = "#58b7ff";
+        for (const snack of snacks) {
+          if (snack.collected) continue;
+          const y = snack.y - cameraY;
+          if (y > canvas.height || y + snack.radius < -40) continue;
+          ctx.beginPath();
+          ctx.ellipse(snack.x, y, snack.radius + 3, snack.radius, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.beginPath();
+          ctx.moveTo(snack.x + snack.radius + 2, y);
+          ctx.lineTo(snack.x + snack.radius + 10, y - 6);
+          ctx.lineTo(snack.x + snack.radius + 10, y + 6);
+          ctx.closePath();
+          ctx.fill();
+          ctx.fillStyle = "#1c1f2a";
+          ctx.beginPath();
+          ctx.arc(snack.x - 4, y - 2, 2, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = "#58b7ff";
+        }
+
+        ctx.fillStyle = "#7b5f86";
+        for (const bad of spoiledFish) {
+          if (!bad.active) continue;
+          const y = bad.y - cameraY;
+          if (y > canvas.height || y + bad.radius < -40) continue;
+          ctx.beginPath();
+          ctx.ellipse(bad.x, y, bad.radius + 4, bad.radius, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.beginPath();
+          ctx.moveTo(bad.x + bad.radius + 2, y);
+          ctx.lineTo(bad.x + bad.radius + 10, y - 6);
+          ctx.lineTo(bad.x + bad.radius + 10, y + 6);
+          ctx.closePath();
+          ctx.fill();
+          ctx.strokeStyle = "#2b1f33";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(bad.x - 8, y - 3);
+          ctx.lineTo(bad.x - 2, y + 3);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(bad.x - 8, y + 3);
+          ctx.lineTo(bad.x - 2, y - 3);
+          ctx.stroke();
+          ctx.fillStyle = "#7b5f86";
+        }
+
+        drawCat(player.x, player.y - cameraY, player.radius, time);
+      }
+
+      function drawRoundedRect(x, y, width, height, radius) {
+        const r = Math.min(radius, width / 2, height / 2);
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.lineTo(x + width - r, y);
+        ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+        ctx.lineTo(x + width, y + height - r);
+        ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+        ctx.lineTo(x + r, y + height);
+        ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+        ctx.lineTo(x, y + r);
+        ctx.quadraticCurveTo(x, y, x + r, y);
+        ctx.closePath();
+      }
+
+      function drawBackground() {
+        const sky = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        sky.addColorStop(0, "#c9e9ff");
+        sky.addColorStop(0.45, "#e9f5ff");
+        sky.addColorStop(1, "#fff2d7");
+        ctx.fillStyle = sky;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
+        drawCloud(110, 120, 120);
+        drawCloud(320, 80, 150);
+        drawCloud(660, 110, 170);
+        drawCloud(840, 70, 130);
+
+        ctx.fillStyle = "#cfe8b0";
+        drawHills(0.55);
+        ctx.fillStyle = "#b7da96";
+        drawHills(0.68);
+
+        const groundY = canvas.height * 0.78 - cameraY * 0.05;
+        ctx.fillStyle = "#9ad17d";
+        ctx.fillRect(0, groundY, canvas.width, canvas.height - groundY);
+        drawMeadow(groundY);
+      }
+
+      function drawCloud(x, y, size) {
+        ctx.beginPath();
+        ctx.ellipse(x, y, size * 0.6, size * 0.35, 0, 0, Math.PI * 2);
+        ctx.ellipse(x + size * 0.4, y - size * 0.1, size * 0.5, size * 0.3, 0, 0, Math.PI * 2);
+        ctx.ellipse(x - size * 0.4, y - size * 0.05, size * 0.45, size * 0.28, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      function drawHills(heightRatio) {
+        ctx.beginPath();
+        const baseY = canvas.height * heightRatio - cameraY * 0.04;
+        ctx.moveTo(0, baseY);
+        for (let x = 0; x <= canvas.width; x += 80) {
+          const bump = Math.sin((x + cameraY * 0.2) * 0.015) * 24;
+          ctx.lineTo(x, baseY + bump);
+        }
+        ctx.lineTo(canvas.width, canvas.height);
+        ctx.lineTo(0, canvas.height);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      function drawMeadow(baseY) {
+        ctx.fillStyle = "#7fcf6a";
+        for (let i = 0; i < 18; i += 1) {
+          const x = (i * 70 + cameraY * 0.3) % (canvas.width + 100) - 50;
+          ctx.beginPath();
+          ctx.ellipse(x, baseY + 18, 60, 16, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.fillStyle = "#ffffff";
+        for (let i = 0; i < 20; i += 1) {
+          const x = (i * 90 + cameraY * 0.5) % (canvas.width + 120) - 60;
+          const y = baseY + 30 + (i % 4) * 22;
+          ctx.beginPath();
+          ctx.arc(x, y, 4, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      function drawGrassTop(x, y, width, height) {
+        const grassHeight = Math.min(18, height * 0.9);
+        ctx.fillStyle = "#7bd35a";
+        drawRoundedRect(x - 2, y - grassHeight + 2, width + 4, grassHeight, 12);
+        ctx.fill();
+        ctx.fillStyle = "#6cbc4e";
+        for (let i = 0; i < width; i += 18) {
+          const bladeX = x + i + (i % 2 ? 6 : 0);
+          ctx.beginPath();
+          ctx.moveTo(bladeX, y - 4);
+          ctx.lineTo(bladeX + 6, y - 12);
+          ctx.lineTo(bladeX + 12, y - 4);
+          ctx.closePath();
+          ctx.fill();
+        }
+
+        ctx.fillStyle = "#7a5a3a";
+        for (let i = 0; i < width; i += 26) {
+          const stoneX = x + i + 8;
+          ctx.beginPath();
+          ctx.arc(stoneX, y + height * 0.55, 6, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      let audioCtx = null;
+      let bgPlaying = false;
+      let bgNodes = null;
+
+      function ensureAudio() {
+        if (!audioCtx) {
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioCtx.state === "suspended") {
+          audioCtx.resume();
+        }
+      }
+
+      function startBackgroundMusic() {
+        if (!audioCtx || bgPlaying) return;
+        const master = audioCtx.createGain();
+        master.gain.value = 0.06;
+        master.connect(audioCtx.destination);
+
+        const osc1 = audioCtx.createOscillator();
+        const osc2 = audioCtx.createOscillator();
+        const lfo = audioCtx.createOscillator();
+        const lfoGain = audioCtx.createGain();
+
+        osc1.type = "sine";
+        osc2.type = "triangle";
+        osc1.frequency.value = 196;
+        osc2.frequency.value = 246.94;
+
+        lfo.type = "sine";
+        lfo.frequency.value = 0.15;
+        lfoGain.gain.value = 18;
+
+        lfo.connect(lfoGain);
+        lfoGain.connect(osc1.frequency);
+
+        osc1.connect(master);
+        osc2.connect(master);
+
+        osc1.start();
+        osc2.start();
+        lfo.start();
+
+        bgNodes = { master, osc1, osc2, lfo, lfoGain };
+        bgPlaying = true;
+      }
+
+      function playTone({ freq, duration, type, gain }) {
+        if (!audioCtx) return;
+        const osc = audioCtx.createOscillator();
+        const amp = audioCtx.createGain();
+        osc.type = type;
+        osc.frequency.value = freq;
+        amp.gain.value = gain;
+        osc.connect(amp);
+        amp.connect(audioCtx.destination);
+        osc.start();
+        amp.gain.exponentialRampToValueAtTime(
+          0.001,
+          audioCtx.currentTime + duration
+        );
+        osc.stop(audioCtx.currentTime + duration);
+      }
+
+      function playJumpSound() {
+        playTone({ freq: 520, duration: 0.15, type: "triangle", gain: 0.08 });
+      }
+
+      function playSnackSound() {
+        playTone({ freq: 820, duration: 0.12, type: "sine", gain: 0.1 });
+      }
+
+      function playSpoiledSound() {
+        playTone({ freq: 180, duration: 0.3, type: "sawtooth", gain: 0.08 });
+      }
+
+      function loop(timestamp) {
+        const delta = Math.min((timestamp - lastTime) / 1000, 0.03);
+        lastTime = timestamp;
+        update(delta);
+        draw(timestamp / 1000);
+        requestAnimationFrame(loop);
+      }
+
+      window.addEventListener("keydown", (event) => {
+        ensureAudio();
+        startBackgroundMusic();
+        if (event.key.toLowerCase() === "r" && isGameOver) {
+          resetPlayer();
+        }
+      });
+
+      function drawCat(x, y, r, time) {
+        const bodyR = r * 1.15;
+        const tailWave = Math.sin(time * 5.5) * 0.6;
+
+        ctx.save();
+        ctx.translate(x, y);
+
+        ctx.save();
+        ctx.translate(bodyR * 1.05, bodyR * 0.1);
+        ctx.rotate(tailWave);
+        ctx.fillStyle = "#ff8f3d";
+        ctx.beginPath();
+        ctx.ellipse(0, 0, bodyR * 0.75, bodyR * 0.45, 0.6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#ffd7b0";
+        ctx.beginPath();
+        ctx.ellipse(bodyR * 0.35, -bodyR * 0.05, bodyR * 0.25, bodyR * 0.2, 0.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        ctx.fillStyle = "#ff8f3d";
+        ctx.beginPath();
+        ctx.arc(0, 0, bodyR, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = "#fff1e2";
+        ctx.beginPath();
+        ctx.ellipse(-bodyR * 0.1, bodyR * 0.2, bodyR * 0.75, bodyR * 0.6, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = "#1c1f2a";
+        ctx.beginPath();
+        ctx.ellipse(-bodyR * 0.32, -bodyR * 0.05, bodyR * 0.2, bodyR * 0.24, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.ellipse(bodyR * 0.32, -bodyR * 0.05, bodyR * 0.2, bodyR * 0.24, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#ffffff";
+        ctx.beginPath();
+        ctx.arc(-bodyR * 0.36, -bodyR * 0.1, bodyR * 0.06, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(bodyR * 0.28, -bodyR * 0.1, bodyR * 0.06, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = "#8a3a22";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(-bodyR * 0.1, bodyR * 0.05);
+        ctx.quadraticCurveTo(0, bodyR * 0.15, bodyR * 0.1, bodyR * 0.05);
+        ctx.stroke();
+
+        ctx.restore();
+      }
+
+      requestAnimationFrame(loop);
+    </script>
+  </body>
+</html>
