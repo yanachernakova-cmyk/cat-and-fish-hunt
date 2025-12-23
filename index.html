@@ -485,8 +485,6 @@
       }
 
       let audioCtx = null;
-      let bgPlaying = false;
-      let bgNodes = null;
 
       function ensureAudio() {
         if (!audioCtx) {
@@ -495,40 +493,6 @@
         if (audioCtx.state === "suspended") {
           audioCtx.resume();
         }
-      }
-
-      function startBackgroundMusic() {
-        if (!audioCtx || bgPlaying) return;
-        const master = audioCtx.createGain();
-        master.gain.value = 0.06;
-        master.connect(audioCtx.destination);
-
-        const osc1 = audioCtx.createOscillator();
-        const osc2 = audioCtx.createOscillator();
-        const lfo = audioCtx.createOscillator();
-        const lfoGain = audioCtx.createGain();
-
-        osc1.type = "sine";
-        osc2.type = "triangle";
-        osc1.frequency.value = 196;
-        osc2.frequency.value = 246.94;
-
-        lfo.type = "sine";
-        lfo.frequency.value = 0.15;
-        lfoGain.gain.value = 18;
-
-        lfo.connect(lfoGain);
-        lfoGain.connect(osc1.frequency);
-
-        osc1.connect(master);
-        osc2.connect(master);
-
-        osc1.start();
-        osc2.start();
-        lfo.start();
-
-        bgNodes = { master, osc1, osc2, lfo, lfoGain };
-        bgPlaying = true;
       }
 
       function playTone({ freq, duration, type, gain }) {
@@ -570,7 +534,6 @@
 
       window.addEventListener("keydown", (event) => {
         ensureAudio();
-        startBackgroundMusic();
         if (event.key.toLowerCase() === "r" && isGameOver) {
           resetPlayer();
         }
