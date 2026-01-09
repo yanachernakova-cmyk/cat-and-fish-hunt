@@ -99,6 +99,36 @@
         background: linear-gradient(90deg, #78e6ff 0%, #3fa9f5 100%);
         transition: width 120ms linear;
       }
+
+      .glow {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 1.1rem;
+        color: #2f2a4f;
+      }
+
+      .glow.hidden {
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .glow-bar {
+        width: 160px;
+        height: 14px;
+        border-radius: 999px;
+        border: 2px solid #6a4fb8;
+        background: rgba(255, 255, 255, 0.85);
+        overflow: hidden;
+        box-shadow: inset 0 0 0 1px rgba(106, 79, 184, 0.18);
+      }
+
+      .glow-fill {
+        height: 100%;
+        width: 100%;
+        background: linear-gradient(90deg, #ffe08a 0%, #ffd055 60%, #ffb84a 100%);
+        transition: width 120ms linear;
+      }
     </style>
   </head>
   <body>
@@ -106,7 +136,7 @@
       <header>
         <h1>Cat & Fish Hunt</h1>
         <div class="hint">
-          Use ← → to move. ↑ to jump. Shift to sprint. Level 2: ↑ ↓ to swim, surface for air.
+          Use ← → to move. ↑ to jump. Shift to sprint. Level 2: ↑ ↓ to swim, surface for air. Level 3: ride the wind. Level 4: keep your glow with fireflies. Press 1/2/3/4 to jump to a level.
         </div>
       </header>
       <canvas id="game" width="960" height="540"></canvas>
@@ -118,6 +148,12 @@
             <div class="air-fill" id="airFill"></div>
           </div>
         </div>
+        <div class="glow hidden" id="glowHud">
+          <span>Glow</span>
+          <div class="glow-bar">
+            <div class="glow-fill" id="glowFill"></div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -127,6 +163,8 @@
       const statusLabel = document.getElementById("status");
       const airHud = document.getElementById("airHud");
       const airFill = document.getElementById("airFill");
+      const glowHud = document.getElementById("glowHud");
+      const glowFill = document.getElementById("glowFill");
 
       const player = {
         x: canvas.width / 2,
@@ -145,6 +183,12 @@
       const swimAccel = 620;
       const waterDrag = 0.9;
       const waterSurfaceY = canvas.height * 0.32;
+      const skyGravity = 920;
+      const skyJumpPower = 640;
+      const skyWindStrength = 140;
+      const nightGravity = 1100;
+      const nightJumpPower = 610;
+      const nightBreeze = 60;
       const platform = {
         width: 180,
         height: 18,
@@ -157,15 +201,22 @@
       let lastTime = 0;
       let cameraY = 0;
       const platforms = [];
+      const movingPlatforms = [];
       let highestPlatformY = groundY;
       const snacks = [];
       const spoiledFish = [];
+      const glowOrbs = [];
       let score = 0;
       let level = 1;
       let oxygen = 0;
       const maxOxygen = 10;
+      let glow = 0;
+      const maxGlow = 10;
+      let lightRadius = 120;
       const targetScoreLevel1 = 10;
-      const targetScoreLevel2 = 14;
+      const targetScoreLevel2 = 10;
+      const targetScoreLevel3 = 10;
+      const targetScoreLevel4 = 10;
       let jumpQueued = false;
       let gameTime = 0;
 
@@ -183,13 +234,17 @@
 
       function seedPlatforms() {
         platforms.length = 0;
+        movingPlatforms.length = 0;
         snacks.length = 0;
         spoiledFish.length = 0;
+        glowOrbs.length = 0;
         platforms.push(createPlatform(0, groundY, canvas.width));
         highestPlatformY = groundY;
         score = 0;
         isWin = false;
         oxygen = maxOxygen;
+        glow = maxGlow;
+        lightRadius = 80 + glow * 9;
         updateScore();
         generatePlatforms();
       }
@@ -198,12 +253,28 @@
         if (level === 2) {
           statusLabel.textContent = `Level 2 • Fish: ${score}`;
           airHud.classList.remove("hidden");
+          glowHud.classList.add("hidden");
           const ratio = clamp(oxygen / maxOxygen, 0, 1);
           airFill.style.width = `${ratio * 100}%`;
           return;
         }
+        if (level === 3) {
+          statusLabel.textContent = `Level 3 • Fish: ${score}`;
+          airHud.classList.add("hidden");
+          glowHud.classList.add("hidden");
+          return;
+        }
+        if (level === 4) {
+          statusLabel.textContent = `Level 4 • Fish: ${score}`;
+          airHud.classList.add("hidden");
+          glowHud.classList.remove("hidden");
+          const ratio = clamp(glow / maxGlow, 0, 1);
+          glowFill.style.width = `${ratio * 100}%`;
+          return;
+        }
         statusLabel.textContent = `Level 1 • Fish: ${score}`;
         airHud.classList.add("hidden");
+        glowHud.classList.add("hidden");
       }
 
       function endGame(message) {
@@ -251,6 +322,21 @@
         };
       }
 
+      function createGlowOrb(x, y) {
+        return {
+          x,
+          y,
+          baseX: x,
+          baseY: y,
+          radius: 8,
+          collected: false,
+          driftX: randBetween(10, 26),
+          driftY: randBetween(6, 16),
+          driftSpeed: randBetween(0.6, 1.1),
+          phase: randBetween(0, Math.PI * 2),
+        };
+      }
+
       function generatePlatforms() {
         const maxJumpHeight = (player.jumpPower * player.jumpPower) / (2 * gravity);
         const maxGap = Math.max(90, maxJumpHeight * 0.75);
@@ -275,7 +361,7 @@
           if (Math.random() > 0.35) {
             snacks.push(createSnack(x + platform.width / 2, y - 16));
           }
-          if (Math.random() > 0.85) {
+          if (Math.random() > 0.88) {
             spoiledFish.push(createSpoiledFish(x + platform.width * 0.25, y - 16));
           }
           highestPlatformY = y;
@@ -284,10 +370,14 @@
 
       function seedUnderwaterLevel() {
         platforms.length = 0;
+        movingPlatforms.length = 0;
         snacks.length = 0;
         spoiledFish.length = 0;
+        glowOrbs.length = 0;
         score = 0;
         oxygen = maxOxygen;
+        glow = maxGlow;
+        lightRadius = 80 + glow * 9;
         isWin = false;
         cameraY = 0;
         const platformY = waterSurfaceY + 90;
@@ -304,19 +394,116 @@
           snacks.push(createSnack(x, y));
         }
 
-        for (let i = 0; i < platforms.length; i += 2) {
+        for (let i = 0; i < platforms.length; i += 3) {
           const plat = platforms[i];
           const hazardX = clamp(plat.x + plat.width * 0.5, 60, canvas.width - 60);
           const hazardY = Math.min(canvas.height - 60, plat.y + 50);
           spoiledFish.push(createSpoiledFish(hazardX, hazardY));
         }
 
-        for (let i = 0; i < 2; i += 1) {
+        for (let i = 0; i < 1; i += 1) {
           const x = randBetween(60, canvas.width - 60);
           const y = randBetween(waterSurfaceY + 120, canvas.height - 80);
           spoiledFish.push(createSpoiledFish(x, y));
         }
         updateScore();
+      }
+
+      function seedSkyLevel() {
+        platforms.length = 0;
+        movingPlatforms.length = 0;
+        snacks.length = 0;
+        spoiledFish.length = 0;
+        glowOrbs.length = 0;
+        score = 0;
+        oxygen = maxOxygen;
+        glow = maxGlow;
+        lightRadius = 80 + glow * 9;
+        isWin = false;
+        cameraY = 0;
+
+        platforms.push(createPlatform(0, canvas.height - 70, canvas.width));
+        platforms.push(createPlatform(120, canvas.height - 190, 180));
+        platforms.push(createPlatform(560, canvas.height - 210, 160));
+        platforms.push(createPlatform(320, canvas.height - 300, 200));
+        platforms.push(createPlatform(60, canvas.height - 360, 150));
+        platforms.push(createPlatform(680, canvas.height - 360, 160));
+
+        movingPlatforms.push(createMovingPlatform(240, canvas.height - 140, 160, 60, 0.9));
+        movingPlatforms.push(createMovingPlatform(520, canvas.height - 260, 140, 90, 1.2));
+        movingPlatforms.push(createMovingPlatform(380, canvas.height - 400, 150, 110, 1.0));
+
+        for (let i = 0; i < 14; i += 1) {
+          const x = randBetween(80, canvas.width - 80);
+          const y = randBetween(120, canvas.height - 140);
+          snacks.push(createSnack(x, y));
+        }
+
+        for (let i = 0; i < 5; i += 1) {
+          const x = randBetween(90, canvas.width - 90);
+          const y = randBetween(140, canvas.height - 120);
+          spoiledFish.push(createSpoiledFish(x, y));
+        }
+
+        updateScore();
+      }
+
+      function seedNightLevel() {
+        platforms.length = 0;
+        movingPlatforms.length = 0;
+        snacks.length = 0;
+        spoiledFish.length = 0;
+        glowOrbs.length = 0;
+        score = 0;
+        oxygen = maxOxygen;
+        glow = maxGlow;
+        lightRadius = 80 + glow * 9;
+        isWin = false;
+        cameraY = 0;
+
+        platforms.push(createPlatform(0, canvas.height - 70, canvas.width));
+        platforms.push(createPlatform(120, canvas.height - 200, 190));
+        platforms.push(createPlatform(420, canvas.height - 250, 200));
+        platforms.push(createPlatform(700, canvas.height - 180, 160));
+        platforms.push(createPlatform(260, canvas.height - 340, 180));
+        platforms.push(createPlatform(540, canvas.height - 380, 170));
+
+        movingPlatforms.push(createMovingPlatform(180, canvas.height - 120, 140, 80, 1.2));
+        movingPlatforms.push(createMovingPlatform(520, canvas.height - 300, 140, 90, 1.0));
+
+        for (let i = 0; i < 12; i += 1) {
+          const x = randBetween(70, canvas.width - 70);
+          const y = randBetween(120, canvas.height - 120);
+          snacks.push(createSnack(x, y));
+        }
+
+        for (let i = 0; i < 4; i += 1) {
+          const x = randBetween(80, canvas.width - 80);
+          const y = randBetween(140, canvas.height - 140);
+          spoiledFish.push(createSpoiledFish(x, y));
+        }
+
+        for (let i = 0; i < 8; i += 1) {
+          const x = randBetween(60, canvas.width - 60);
+          const y = randBetween(110, canvas.height - 140);
+          glowOrbs.push(createGlowOrb(x, y));
+        }
+
+        updateScore();
+      }
+
+      function createMovingPlatform(x, y, width, range, speed) {
+        return {
+          x,
+          y,
+          width,
+          height: platform.height,
+          baseX: x,
+          range,
+          speed,
+          phase: randBetween(0, Math.PI * 2),
+          moveVX: 0,
+        };
       }
 
       function handleKey(event, isDown) {
@@ -339,7 +526,15 @@
 
       function resetPlayer() {
         player.x = canvas.width / 2;
-        player.y = level === 2 ? waterSurfaceY - player.radius - 4 : groundY - player.radius;
+        if (level === 2) {
+          player.y = waterSurfaceY - player.radius - 4;
+        } else if (level === 3) {
+          player.y = canvas.height - 110;
+        } else if (level === 4) {
+          player.y = canvas.height - 110;
+        } else {
+          player.y = groundY - player.radius;
+        }
         player.vx = 0;
         player.vy = 0;
         isGameOver = false;
@@ -347,6 +542,10 @@
         cameraY = 0;
         if (level === 2) {
           seedUnderwaterLevel();
+        } else if (level === 3) {
+          seedSkyLevel();
+        } else if (level === 4) {
+          seedNightLevel();
         } else {
           seedPlatforms();
         }
@@ -360,8 +559,11 @@
         }
 
         gameTime += delta;
-        if (level === 2) {
+        if (level >= 2) {
           updateFishMotion(gameTime);
+        }
+        if (level === 3 || level === 4) {
+          updateMovingPlatforms(gameTime);
         }
 
         if (level === 1) {
@@ -400,7 +602,7 @@
             jumpQueued = false;
             playJumpSound();
           }
-        } else {
+        } else if (level === 2) {
           let ax = 0;
           let ay = 0;
 
@@ -430,11 +632,105 @@
             endGame("Status: Out of air!");
             return;
           }
+        } else if (level === 3) {
+          const sprint = keys.has("Shift") ? player.sprintBoost : 1;
+          const velocity = player.speed * sprint;
+          const wind = Math.sin(gameTime * 0.6) * skyWindStrength;
+          let dx = 0;
+          let onGround = false;
+          let ridingPlatform = null;
+
+          if (keys.has("ArrowLeft")) dx -= 1;
+          if (keys.has("ArrowRight")) dx += 1;
+
+          player.x += (dx * velocity + wind) * delta;
+          player.vy += skyGravity * delta;
+          player.y += player.vy * delta;
+
+          const prevY = player.y - player.vy * delta;
+
+          for (const plat of platforms.concat(movingPlatforms)) {
+            const withinX =
+              player.x + player.radius > plat.x &&
+              player.x - player.radius < plat.x + plat.width;
+            const hitTop =
+              player.vy >= 0 &&
+              prevY + player.radius <= plat.y &&
+              player.y + player.radius >= plat.y;
+            if (withinX && hitTop) {
+              player.y = plat.y - player.radius;
+              player.vy = 0;
+              onGround = true;
+              ridingPlatform = plat;
+              break;
+            }
+          }
+
+          if (onGround && jumpQueued) {
+            player.vy = -skyJumpPower;
+            jumpQueued = false;
+            playJumpSound();
+          }
+
+          if (onGround && ridingPlatform && ridingPlatform.moveVX) {
+            player.x += ridingPlatform.moveVX * delta;
+          }
+        } else {
+          const sprint = keys.has("Shift") ? player.sprintBoost : 1;
+          const glowSlow = glow <= 2 ? 0.75 : 1;
+          const velocity = player.speed * sprint * glowSlow;
+          const breeze = Math.sin(gameTime * 0.5) * nightBreeze;
+          let dx = 0;
+          let onGround = false;
+          let ridingPlatform = null;
+
+          if (keys.has("ArrowLeft")) dx -= 1;
+          if (keys.has("ArrowRight")) dx += 1;
+
+          player.x += (dx * velocity + breeze) * delta;
+          player.vy += nightGravity * delta;
+          player.y += player.vy * delta;
+
+          const prevY = player.y - player.vy * delta;
+
+          for (const plat of platforms.concat(movingPlatforms)) {
+            const withinX =
+              player.x + player.radius > plat.x &&
+              player.x - player.radius < plat.x + plat.width;
+            const hitTop =
+              player.vy >= 0 &&
+              prevY + player.radius <= plat.y &&
+              player.y + player.radius >= plat.y;
+            if (withinX && hitTop) {
+              player.y = plat.y - player.radius;
+              player.vy = 0;
+              onGround = true;
+              ridingPlatform = plat;
+              break;
+            }
+          }
+
+          if (onGround && jumpQueued) {
+            player.vy = -nightJumpPower;
+            jumpQueued = false;
+            playJumpSound();
+          }
+
+          if (onGround && ridingPlatform && ridingPlatform.moveVX) {
+            player.x += ridingPlatform.moveVX * delta;
+          }
+
+          glow = Math.max(0, glow - delta * 1.1);
+          lightRadius = 80 + glow * 9;
+          updateScore();
         }
 
         for (const snack of snacks) {
           if (snack.collected) continue;
           const dist = Math.hypot(player.x - snack.x, player.y - snack.y);
+          if (level === 4 && dist > lightRadius) {
+            continue;
+          }
           if (dist < player.radius + snack.radius) {
             snack.collected = true;
             score += 1;
@@ -446,8 +742,31 @@
               return;
             }
             if (level === 2 && score >= targetScoreLevel2) {
+              level = 3;
+              resetPlayer();
+              return;
+            }
+            if (level === 3 && score >= targetScoreLevel3) {
+              level = 4;
+              resetPlayer();
+              return;
+            }
+            if (level === 4 && score >= targetScoreLevel4) {
               endWin();
               break;
+            }
+          }
+        }
+
+        if (level === 4) {
+          for (const orb of glowOrbs) {
+            if (orb.collected) continue;
+            const dist = Math.hypot(player.x - orb.x, player.y - orb.y);
+            if (dist < player.radius + orb.radius) {
+              orb.collected = true;
+              glow = Math.min(maxGlow, glow + 3.2);
+              updateScore();
+              playSnackSound();
             }
           }
         }
@@ -511,6 +830,19 @@
           bad.x = bad.baseX + Math.cos(time * bad.driftSpeed + bad.phase) * bad.driftX;
           bad.y = bad.baseY + Math.sin(time * bad.driftSpeed + bad.phase) * bad.driftY;
         }
+        for (const orb of glowOrbs) {
+          if (orb.collected) continue;
+          orb.x = orb.baseX + Math.sin(time * orb.driftSpeed + orb.phase) * orb.driftX;
+          orb.y = orb.baseY + Math.cos(time * orb.driftSpeed + orb.phase) * orb.driftY;
+        }
+      }
+
+      function updateMovingPlatforms(time) {
+        for (const plat of movingPlatforms) {
+          const phase = time * plat.speed + plat.phase;
+          plat.x = plat.baseX + Math.sin(phase) * plat.range;
+          plat.moveVX = Math.cos(phase) * plat.range * plat.speed;
+        }
       }
 
       function draw(time) {
@@ -518,14 +850,27 @@
 
         if (level === 2) {
           drawUnderwaterBackground();
+        } else if (level === 3) {
+          drawSkyBackground();
+        } else if (level === 4) {
+          drawNightBackground();
         } else {
           drawBackground();
         }
 
         ctx.fillStyle = "#6b4b33";
         for (const plat of platforms) {
-          const y = level === 2 ? plat.y : plat.y - cameraY;
+          const y = level === 1 ? plat.y - cameraY : plat.y;
           if (y > canvas.height || y + plat.height < -40) continue;
+          drawRoundedRect(plat.x, y, plat.width, plat.height, 10);
+          ctx.fill();
+          drawGrassTop(plat.x, y, plat.width, plat.height);
+        }
+
+        for (const plat of movingPlatforms) {
+          const y = level === 1 ? plat.y - cameraY : plat.y;
+          if (y > canvas.height || y + plat.height < -40) continue;
+          ctx.fillStyle = "#5b3f2a";
           drawRoundedRect(plat.x, y, plat.width, plat.height, 10);
           ctx.fill();
           drawGrassTop(plat.x, y, plat.width, plat.height);
@@ -534,7 +879,7 @@
         ctx.fillStyle = "#58b7ff";
         for (const snack of snacks) {
           if (snack.collected) continue;
-          const y = level === 2 ? snack.y : snack.y - cameraY;
+          const y = level === 1 ? snack.y - cameraY : snack.y;
           if (y > canvas.height || y + snack.radius < -40) continue;
           ctx.beginPath();
           ctx.ellipse(snack.x, y, snack.radius + 3, snack.radius, 0, 0, Math.PI * 2);
@@ -552,10 +897,27 @@
           ctx.fillStyle = "#58b7ff";
         }
 
+        if (level === 4) {
+          ctx.fillStyle = "#ffd65a";
+          for (const orb of glowOrbs) {
+            if (orb.collected) continue;
+            const y = orb.y;
+            if (y > canvas.height || y + orb.radius < -40) continue;
+            ctx.beginPath();
+            ctx.arc(orb.x, y, orb.radius + 2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = "rgba(255, 220, 120, 0.7)";
+            ctx.beginPath();
+            ctx.arc(orb.x, y, orb.radius + 8, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = "#ffd65a";
+          }
+        }
+
         ctx.fillStyle = "#7b5f86";
         for (const bad of spoiledFish) {
           if (!bad.active) continue;
-          const y = level === 2 ? bad.y : bad.y - cameraY;
+          const y = level === 1 ? bad.y - cameraY : bad.y;
           if (y > canvas.height || y + bad.radius < -40) continue;
           ctx.beginPath();
           ctx.ellipse(bad.x, y, bad.radius + 4, bad.radius, 0, 0, Math.PI * 2);
@@ -579,7 +941,11 @@
           ctx.fillStyle = "#7b5f86";
         }
 
-        drawCat(player.x, level === 2 ? player.y : player.y - cameraY, player.radius, time);
+        if (level === 4) {
+          drawNightGlow();
+        }
+
+        drawCat(player.x, level === 1 ? player.y - cameraY : player.y, player.radius, time);
 
         if (isGameOver) {
           drawGameOver();
@@ -663,6 +1029,97 @@
           ctx.arc(x, y, 6, 0, Math.PI * 2);
           ctx.fill();
         }
+      }
+
+      function drawSkyBackground() {
+        const sky = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        sky.addColorStop(0, "#ffdfb3");
+        sky.addColorStop(0.45, "#ffd5f2");
+        sky.addColorStop(1, "#7bb1ff");
+        ctx.fillStyle = sky;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.fillStyle = "rgba(255, 255, 255, 0.7)";
+        drawCloud(120, 120, 140);
+        drawCloud(340, 70, 160);
+        drawCloud(700, 110, 190);
+        drawCloud(860, 60, 120);
+
+        ctx.fillStyle = "rgba(255, 214, 102, 0.8)";
+        ctx.beginPath();
+        ctx.arc(canvas.width * 0.82, canvas.height * 0.18, 48, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = "rgba(122, 177, 255, 0.35)";
+        for (let i = 0; i < 8; i += 1) {
+          const x = i * 130 + 40;
+          const y = canvas.height * 0.65 + Math.sin(i * 0.8) * 22;
+          ctx.beginPath();
+          ctx.ellipse(x, y, 90, 26, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      function drawNightBackground() {
+        const sky = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        sky.addColorStop(0, "#0b1030");
+        sky.addColorStop(0.6, "#0a1b3f");
+        sky.addColorStop(1, "#09172b");
+        ctx.fillStyle = sky;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
+        for (let i = 0; i < 50; i += 1) {
+          const x = (i * 37) % canvas.width;
+          const y = (i * 59) % (canvas.height * 0.7);
+          const r = i % 3 === 0 ? 2 : 1;
+          ctx.beginPath();
+          ctx.arc(x, y, r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        ctx.fillStyle = "#f6e1a6";
+        ctx.beginPath();
+        ctx.arc(canvas.width * 0.82, canvas.height * 0.18, 40, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "rgba(11, 16, 48, 0.45)";
+        ctx.beginPath();
+        ctx.arc(canvas.width * 0.84, canvas.height * 0.16, 36, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = "#0c152f";
+        ctx.fillRect(0, canvas.height * 0.72, canvas.width, canvas.height * 0.28);
+        ctx.fillStyle = "#0f1d3a";
+        for (let x = 0; x < canvas.width; x += 120) {
+          ctx.beginPath();
+          ctx.ellipse(x + 40, canvas.height * 0.74, 120, 26, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      function drawNightGlow() {
+        ctx.save();
+        ctx.fillStyle = "rgba(0, 0, 0, 0.98)";
+        ctx.beginPath();
+        ctx.rect(0, 0, canvas.width, canvas.height);
+        ctx.arc(player.x, player.y, lightRadius, 0, Math.PI * 2);
+        ctx.fill("evenodd");
+
+        const inner = ctx.createRadialGradient(
+          player.x,
+          player.y,
+          lightRadius * 0.6,
+          player.x,
+          player.y,
+          lightRadius
+        );
+        inner.addColorStop(0, "rgba(0, 0, 0, 0)");
+        inner.addColorStop(1, "rgba(0, 0, 0, 1)");
+        ctx.fillStyle = inner;
+        ctx.beginPath();
+        ctx.arc(player.x, player.y, lightRadius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
       }
 
       function drawPalm(x, y) {
@@ -834,6 +1291,22 @@
         startBackgroundMusic();
         if (event.key.toLowerCase() === "r" && isGameOver) {
           level = 1;
+          resetPlayer();
+        }
+        if (event.key === "1") {
+          level = 1;
+          resetPlayer();
+        }
+        if (event.key === "2") {
+          level = 2;
+          resetPlayer();
+        }
+        if (event.key === "3") {
+          level = 3;
+          resetPlayer();
+        }
+        if (event.key === "4") {
+          level = 4;
           resetPlayer();
         }
       });
